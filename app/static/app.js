@@ -225,6 +225,13 @@ function scrollChat() {
 
 async function loadDocuments() {
     const docList = document.getElementById('doc-list');
+    const refreshBtn = document.getElementById('btn-refresh');
+
+    // Show loading state on refresh button
+    if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.innerHTML = '<span class="spinner"></span> Refreshing...';
+    }
 
     try {
         const resp = await fetch(`${API}/documents`);
@@ -270,20 +277,35 @@ async function loadDocuments() {
         </div>
       </div>
     `).join('');
+
+        showToast(`Loaded ${data.documents.length} document(s).`, 'success');
     } catch (err) {
         showToast(err.message, 'error');
+    } finally {
+        if (refreshBtn) {
+            refreshBtn.disabled = false;
+            refreshBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+              <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-1.64-8.36L23 10"/>
+            </svg> Refresh`;
+        }
     }
 }
 
 async function deleteDocument(docId) {
-    if (!confirm('Delete this document and all its chunks?')) return;
+    // Find the button that was clicked and show loading state
+    const el = document.getElementById(`doc-${docId}`);
+    const btn = el ? el.querySelector('.btn-danger') : null;
+
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner"></span> Deleting...';
+    }
 
     try {
         const resp = await fetch(`${API}/documents/${docId}`, { method: 'DELETE' });
         if (!resp.ok) throw new Error('Delete failed');
 
         showToast('Document deleted.', 'success');
-        const el = document.getElementById(`doc-${docId}`);
         if (el) {
             el.style.opacity = '0';
             el.style.transform = 'translateX(20px)';
@@ -295,6 +317,12 @@ async function deleteDocument(docId) {
         }
     } catch (err) {
         showToast(err.message, 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
+              <polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+            </svg> Delete`;
+        }
     }
 }
 

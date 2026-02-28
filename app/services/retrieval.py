@@ -95,14 +95,55 @@ class RetrievalService:
     # ── read ────────────────────────────────────────────────────────────
 
     def search(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
-        """Return the top-k most similar chunks for *query*."""
+        """
+        Return the top-k most similar chunks for *query* with document diversity.
+        
+        Fetches extra results and interleaves across documents so that
+        chunks from multiple PDFs are included in the final set.
+        """
         k = top_k or settings.top_k
+        # Fetch 3x to have enough for diversity re-ordering
+        fetch_k = min(k * 3, 50)
         query_vec = embedding_service.encode(query)[0]
 
         results = self.client.search(
             collection_name=settings.qdrant_collection,
             query_vector=query_vec,
-            limit=k,
+            limit=fetch_k,
+        )
+
+        if not results:
+            return []
+
+        # Group hits by document_id
+        from collections import OrderedDict
+        doc_buckets: OrderedDict[str, list] = OrderedDict()
+        for hit in results:
+            doc_id = (hit.payload or {}).get("document_id", "unknown")
+            if doc_id not in doc_buckets:
+                doc_buckets[doc_id] = []
+            doc_buckets[doc_id].append(hit)
+
+        # Round-robin interleave across documents for diversity
+        diverse_hits = []
+        bucket_iters = [iter(bucket) for bucket in doc_buckets.values()]
+        while len(diverse_hits) < k and bucket_iters:
+            exhausted = []
+            for i, it in enumerate(bucket_iters):
+                if len(diverse_hits) >= k:
+                    break
+                try:
+                    diverse_hits.append(next(it))
+                except StopIteration:
+                    exhausted.append(i)
+            for i in reversed(exhausted):
+                bucket_iters.pop(i)
+
+        logger.debug(
+            "search_diversity",
+            total_fetched=len(results),
+            documents_found=len(doc_buckets),
+            returned=len(diverse_hits),
         )
 
         return [
@@ -110,7 +151,7 @@ class RetrievalService:
                 "score": hit.score,
                 **hit.payload,
             }
-            for hit in results
+            for hit in diverse_hits
         ]
 
     def list_documents(self) -> list[dict[str, Any]]:

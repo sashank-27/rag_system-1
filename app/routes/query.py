@@ -9,6 +9,7 @@ import re
 import structlog
 from fastapi import APIRouter, HTTPException
 
+from app.config import settings
 from app.models.schemas import AskRequest, AskResponse
 from app.services.language_detector import language_detector
 from app.services.llm import llm_service
@@ -111,8 +112,8 @@ async def _handle_rag(
 ) -> AskResponse:
     """Handle RAG pipeline queries."""
     try:
-        # ── Retrieve ────────────────────────────────────────────────────
-        results = retrieval_service.search(question)
+        # ── Retrieve (fetch 2x top_k, then rerank down) ──────────────────
+        results = retrieval_service.search(question, top_k=settings.top_k * 2)
 
         if not results:
             return AskResponse(
@@ -122,7 +123,7 @@ async def _handle_rag(
             )
 
         # ── Rerank ──────────────────────────────────────────────────────
-        reranked = reranker_service.rerank(question, results)
+        reranked = reranker_service.rerank(question, results, top_k=settings.top_k)
 
         # ── Generate answer ─────────────────────────────────────────────
         answer = llm_service.generate(

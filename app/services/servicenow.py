@@ -15,7 +15,7 @@ from app.models.schemas import HostResponse
 
 logger = structlog.get_logger(__name__)
 
-CMDB_TABLE = "cmdb_ci_server"
+CMDB_TABLES = ["cmdb_ci_server", "cmdb_ci_computer"]
 
 
 class ServiceNowClient:
@@ -33,43 +33,48 @@ class ServiceNowClient:
         """
         Query CMDB for *hostname*.
 
+        Searches both cmdb_ci_server and cmdb_ci_computer tables.
         Returns a ``HostResponse`` on success or an error message string.
         """
         if not self._base_url or not self._auth[0]:
             return "ServiceNow is not configured. Set SERVICENOW_INSTANCE, SERVICENOW_USERNAME, and SERVICENOW_PASSWORD in .env."
 
-        url = (
-            f"{self._base_url}/api/now/table/{CMDB_TABLE}"
-            f"?sysparm_query=name={hostname}"
-            f"&sysparm_limit=1"
-        )
         headers = {"Accept": "application/json"}
 
         try:
             async with httpx.AsyncClient(verify=False, timeout=30) as client:
-                resp = await client.get(
-                    url,
-                    headers=headers,
-                    auth=self._auth,
-                )
-                resp.raise_for_status()
+                for table in CMDB_TABLES:
+                    url = (
+                        f"{self._base_url}/api/now/table/{table}"
+                        f"?sysparm_query=name={hostname}"
+                        f"&sysparm_limit=1"
+                    )
+                    logger.debug("servicenow_query", table=table, hostname=hostname)
 
-            data = resp.json()
-            results = data.get("result", [])
+                    resp = await client.get(
+                        url,
+                        headers=headers,
+                        auth=self._auth,
+                    )
+                    resp.raise_for_status()
 
-            if not results:
-                return "No host found in ServiceNow CMDB."
+                    data = resp.json()
+                    results = data.get("result", [])
 
-            record = results[0]
-            return HostResponse(
-                name=record.get("name", ""),
-                ip_address=record.get("ip_address", ""),
-                os=record.get("os", ""),
-                location=record.get("location", {}).get("display_value", "")
-                if isinstance(record.get("location"), dict)
-                else record.get("location", ""),
-                install_status=record.get("install_status", ""),
-            )
+                    if results:
+                        record = results[0]
+                        logger.info("servicenow_found", table=table, hostname=hostname)
+                        return HostResponse(
+                            name=record.get("name", ""),
+                            ip_address=record.get("ip_address", ""),
+                            os=record.get("os", ""),
+                            location=record.get("location", {}).get("display_value", "")
+                            if isinstance(record.get("location"), dict)
+                            else record.get("location", ""),
+                            install_status=record.get("install_status", ""),
+                        )
+
+            return "No host found in ServiceNow CMDB."
 
         except httpx.HTTPStatusError as exc:
             logger.error("servicenow_http_error", status=exc.response.status_code)

@@ -30,13 +30,35 @@ pytesseract.pytesseract.tesseract_cmd = settings.tesseract_cmd
 
 # ── Text extraction ─────────────────────────────────────────────────────────
 
-def _extract_text_from_page(page: fitz.Page) -> str:
-    """Extract text from a page; fall back to OCR if empty."""
-    text = page.get_text("text").strip()
-    if text:
-        return text
+def _is_garbled(text: str) -> bool:
+    """
+    Heuristic: text is likely garbled if it has a high ratio of
+    non-alphanumeric, non-whitespace, non-common-punctuation characters.
+    This catches custom-font Hindi PDFs where PyMuPDF extracts gibberish.
+    
+    Correctly handles Hindi/Devanagari text with zero-width joiners (ZWJ)
+    and combining marks which are normal in Indic scripts.
+    """
+    if not text or len(text) < 20:
+        return True
 
-    # OCR fallback: render page to image then run Tesseract
+    import unicodedata
+    good = 0
+    for ch in text:
+        cat = unicodedata.category(ch)
+        # L = letters (any script), N = numbers, Z = separators,
+        # P = punctuation, M = combining marks (matras/vowel signs),
+        # Cf = format chars (zero-width joiners, common in Hindi)
+        if cat[0] in ("L", "N", "Z", "P", "M") or cat == "Cf":
+            good += 1
+
+    ratio = good / len(text)
+    # If less than 50% of characters are "normal", it's garbled
+    return ratio < 0.50
+
+
+def _ocr_page(page: fitz.Page) -> str:
+    """Render page to image and run Tesseract OCR."""
     try:
         pix = page.get_pixmap(dpi=300)
         img = Image.open(BytesIO(pix.tobytes("png")))
@@ -46,6 +68,31 @@ def _extract_text_from_page(page: fitz.Page) -> str:
     except Exception as exc:
         logger.warning("ocr_failed", page=page.number, error=str(exc))
         return ""
+
+
+def _extract_text_from_page(page: fitz.Page) -> str:
+    """
+    Extract text from a page.
+    Falls back to OCR if:
+      - No text is extracted
+      - Extracted text looks garbled (custom fonts)
+    """
+    text = page.get_text("text").strip()
+
+    # If text exists but looks garbled, prefer OCR
+    if text and not _is_garbled(text):
+        return text
+
+    if text and _is_garbled(text):
+        logger.debug("garbled_text_detected", page=page.number, snippet=text[:60])
+
+    # OCR fallback
+    ocr_text = _ocr_page(page)
+    if ocr_text:
+        return ocr_text
+
+    # If OCR also failed, return whatever we have (even if garbled)
+    return text
 
 
 def extract_text_from_pdf(file: BinaryIO, filename: str) -> list[dict]:
@@ -116,8 +163,15 @@ def chunk_document(
 
     upload_ts = datetime.now(timezone.utc).isoformat()
 
-    # Detect dominant language from first available text
-    sample_text = " ".join(p["text"][:500] for p in pages[:3])
+    # Detect dominant language — sample from multiple parts of the document
+    # (first pages often have English headers, so include middle pages too)
+    sample_pages = []
+    if len(pages) <= 5:
+        sample_pages = pages
+    else:
+        mid = len(pages) // 2
+        sample_pages = [pages[0], pages[mid - 1], pages[mid], pages[mid + 1], pages[-1]]
+    sample_text = " ".join(p["text"][:500] for p in sample_pages)
     detected_lang = language_detector.detect(sample_text)
 
     chunks: list[ChunkMetadata] = []
