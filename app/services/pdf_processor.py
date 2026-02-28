@@ -105,10 +105,50 @@ def extract_text_from_pdf(file: BinaryIO, filename: str) -> list[dict]:
     for page in doc:
         text = _extract_text_from_page(page)
         if text:
-            pages.append({"page_number": page.number + 1, "text": text})
+            text = _normalize_text(text)
+            if text:
+                pages.append({"page_number": page.number + 1, "text": text})
     doc.close()
     logger.info("pdf_extracted", filename=filename, pages=len(pages))
     return pages
+
+
+# ── Text normalization ──────────────────────────────────────────────────────
+
+def _normalize_text(text: str) -> str:
+    """
+    Normalize Unicode text for better embedding quality.
+    
+    - Strips zero-width joiners/non-joiners (common in Hindi PDFs)
+    - Normalizes to NFC form (canonical composition)
+    - Collapses excess whitespace
+    - Removes other invisible Unicode characters
+    """
+    import re
+    import unicodedata
+
+    # Normalize to NFC (canonical composition)
+    text = unicodedata.normalize("NFC", text)
+
+    # Remove zero-width characters that break embeddings
+    # ZWJ (\u200d), ZWNJ (\u200c), Zero-width space (\u200b),
+    # Word joiner (\u2060), Zero-width no-break space (\ufeff)
+    text = re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", text)
+
+    # Remove other invisible format characters (category Cf) except common ones
+    cleaned = []
+    for ch in text:
+        cat = unicodedata.category(ch)
+        if cat == "Cf":
+            continue  # Skip format characters
+        cleaned.append(ch)
+    text = "".join(cleaned)
+
+    # Collapse multiple spaces/newlines
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    return text.strip()
 
 
 # ── Chunking ────────────────────────────────────────────────────────────────
