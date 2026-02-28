@@ -30,8 +30,8 @@ class Settings(BaseSettings):
     reranker_model: str = "BAAI/bge-reranker-base"
 
     # ── Chunking ────────────────────────────────────────────
-    chunk_size: int = 600
-    chunk_overlap: int = 100
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
 
     # ── Retrieval ───────────────────────────────────────────
     top_k: int = 5

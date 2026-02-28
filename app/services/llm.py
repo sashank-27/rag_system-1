@@ -32,6 +32,9 @@ SYSTEM_PROMPT = (
     "8. ONLY say 'The information is not available in the provided documents' if you truly cannot find ANY relevant information.\n"
     "9. Always respond in the SAME language as the user's question.\n"
     "10. NEVER hallucinate or fabricate information. Accuracy is more important than completeness.\n"
+    "11. DISTINGUISH between actual legal provisions and editorial/footnote metadata. "
+    "If the context contains amendment references like 'substituted by Act X' or 'inserted by', "
+    "those are editorial notes, NOT the provision itself. Focus on the substantive legal text.\n"
 )
 
 

@@ -125,6 +125,7 @@ def _normalize_text(text: str) -> str:
     - Normalizes to NFC form (canonical composition)
     - Collapses excess whitespace
     - Removes other invisible Unicode characters
+    - Filters out footnotes and amendment notes
     """
     import re
     import unicodedata
@@ -150,7 +151,60 @@ def _normalize_text(text: str) -> str:
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
 
+    # Filter footnotes and amendment notes
+    text = _filter_footnotes(text)
+
     return text.strip()
+
+
+def _filter_footnotes(text: str) -> str:
+    """
+    Remove footnotes and amendment/editorial notes common in Indian legal PDFs.
+    
+    These include lines like:
+    - "1[...द्वारा प्रतिस्थापित।" (substituted by Act...)
+    - "2[...द्वारा अंतःस्थापित।" (inserted by Act...)
+    - "Subs. by Act 3 of 1951, s. 3"
+    - Numbered footnote markers at start of lines
+    """
+    import re
+
+    lines = text.split("\n")
+    filtered = []
+
+    for line in lines:
+        stripped = line.strip()
+
+        # Skip empty lines
+        if not stripped:
+            filtered.append(line)
+            continue
+
+        # Skip footnote-style lines (start with digit + bracket/period then short ref)
+        # e.g., "1. Subs. by Act 3 of 1951, s. 3, for..."
+        if re.match(r"^\d+\.\s*(Subs|Ins|Added|Omitted|Rep|See)\b", stripped, re.IGNORECASE):
+            continue
+
+        # Skip Hindi amendment references
+        # "द्वारा प्रतिस्थापित" = substituted by
+        # "द्वारा अंतःस्थापित" = inserted by
+        # "द्वारा लोप किया गया" = omitted by
+        if re.search(r"द्वारा\s*(मूल\s*)?(धारा|शब्दों?|अंक).*?(प्रतिस्थापित|अंतःस्थापित|लोप)", stripped):
+            continue
+
+        # Skip English amendment short references
+        if re.match(r"^\d+\[", stripped) and len(stripped) < 80:
+            # Short parenthetical references like "1[substituted...]"
+            if re.search(r"(substitut|insert|omit|repeal|amend)", stripped, re.IGNORECASE):
+                continue
+
+        # Skip lines that are purely citation markers like "1.", "2.", etc.
+        if re.match(r"^\d+[.\]]\s*$", stripped):
+            continue
+
+        filtered.append(line)
+
+    return "\n".join(filtered)
 
 
 # ── Chunking ────────────────────────────────────────────────────────────────
