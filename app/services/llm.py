@@ -23,12 +23,13 @@ SYSTEM_PROMPT = (
     "\n"
     "IMPORTANT RULES:\n"
     "1. Read ALL the context carefully before answering.\n"
-    "2. If the question mentions an Article number, section, or clause, look for it in the context.\n"
-    "3. Even if only part of the answer is in the context, provide what you can find.\n"
-    "4. Combine information from multiple context passages if needed.\n"
-    "5. ONLY say 'The information is not available in the provided documents' if you truly cannot find ANY relevant information.\n"
-    "6. Always respond in the SAME language as the user's question.\n"
-    "7. Do not make up information that is not in the context.\n"
+    "2. The context may be in a DIFFERENT language than the question. That is normal — read and understand it anyway.\n"
+    "3. If the question mentions an Article number, section, or clause, look for it in the context.\n"
+    "4. Even if only part of the answer is in the context, provide what you can find.\n"
+    "5. Combine information from multiple context passages if needed.\n"
+    "6. ONLY say 'The information is not available in the provided documents' if you truly cannot find ANY relevant information.\n"
+    "7. Always respond in the SAME language as the user's question.\n"
+    "8. Do not make up information that is not in the context.\n"
 )
 
 
@@ -86,11 +87,16 @@ class LLMService:
     def _build_messages(
         self, question: str, context: str, language: str
     ) -> list[dict[str, str]]:
-        user_content = (
-            f"Context:\n{context}\n\n"
-            f"Question ({language}): {question}\n\n"
-            f"Answer in {language}:"
-        )
+        if context:
+            user_content = (
+                f"Context:\n{context}\n\n"
+                f"Question ({language}): {question}\n\n"
+                f"Answer in {language}:"
+            )
+        else:
+            # No context — used for translation or direct prompts
+            user_content = question
+
         return [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_content},

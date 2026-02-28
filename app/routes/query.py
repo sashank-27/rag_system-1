@@ -107,15 +107,86 @@ async def _handle_servicenow(
     )
 
 
+def _get_document_languages() -> set[str]:
+    """Get the set of languages present in indexed documents."""
+    try:
+        docs = retrieval_service.list_documents()
+        return {d.get("detected_language", "en") for d in docs if d.get("detected_language")}
+    except Exception:
+        return set()
+
+
+def _translate_query_for_search(question: str, target_lang: str) -> str | None:
+    """
+    Use the LLM to translate a query to the target language for cross-lingual search.
+    Returns None if translation fails.
+    """
+    lang_map = {
+        "hi": "Hindi", "gu": "Gujarati", "ta": "Tamil", "te": "Telugu",
+        "bn": "Bengali", "mr": "Marathi", "kn": "Kannada", "ml": "Malayalam",
+        "pa": "Punjabi", "ur": "Urdu", "en": "English", "fr": "French",
+        "de": "German", "es": "Spanish", "zh": "Chinese", "ja": "Japanese",
+        "ko": "Korean", "ar": "Arabic", "ru": "Russian", "pt": "Portuguese",
+    }
+    target_name = lang_map.get(target_lang, target_lang)
+
+    try:
+        # Use a lightweight prompt — just translate, no explanation
+        result = llm_service.generate(
+            question=f"Translate this to {target_name}. Output ONLY the translation, nothing else: {question}",
+            chunks=[],  # No context needed
+            language=target_name,
+            max_new_tokens=128,
+        )
+        translated = result.strip().strip('"').strip("'")
+        if translated and translated.lower() != question.lower():
+            logger.info("query_translated", original=question, translated=translated[:100], target=target_lang)
+            return translated
+    except Exception as exc:
+        logger.warning("query_translation_failed", error=str(exc))
+
+    return None
+
+
 async def _handle_rag(
     question: str, lang_code: str, lang_name: str
 ) -> AskResponse:
-    """Handle RAG pipeline queries."""
+    """Handle RAG pipeline queries with cross-lingual support."""
     try:
-        # ── Retrieve (fetch 2x top_k, then rerank down) ──────────────────
-        results = retrieval_service.search(question, top_k=settings.top_k * 2)
+        # ── Cross-lingual query expansion ───────────────────────────────
+        # Check if documents exist in languages different from the query
+        doc_languages = _get_document_languages()
+        queries_to_search = [question]
 
-        if not results:
+        if doc_languages and lang_code not in doc_languages:
+            # Query language differs from document languages — translate
+            for doc_lang in doc_languages:
+                if doc_lang != lang_code:
+                    translated = _translate_query_for_search(question, doc_lang)
+                    if translated:
+                        queries_to_search.append(translated)
+                    break  # Translate to the first different language only
+
+        logger.info(
+            "cross_lingual_search",
+            query_lang=lang_code,
+            doc_langs=list(doc_languages),
+            num_queries=len(queries_to_search),
+        )
+
+        # ── Retrieve with all queries ───────────────────────────────────
+        all_results = []
+        seen_texts = set()
+        for q in queries_to_search:
+            results = retrieval_service.search(q, top_k=settings.top_k * 2)
+            for r in results:
+                # Deduplicate by text content
+                text_key = r.get("text", "")[:100]
+                if text_key not in seen_texts:
+                    seen_texts.add(text_key)
+                    all_results.append(r)
+
+        if not all_results:
             return AskResponse(
                 question=question,
                 answer="The information is not available in the provided documents.",
@@ -123,7 +194,7 @@ async def _handle_rag(
             )
 
         # ── Rerank ──────────────────────────────────────────────────────
-        reranked = reranker_service.rerank(question, results, top_k=settings.top_k)
+        reranked = reranker_service.rerank(question, all_results, top_k=settings.top_k)
 
         # ── Generate answer ─────────────────────────────────────────────
         answer = llm_service.generate(
