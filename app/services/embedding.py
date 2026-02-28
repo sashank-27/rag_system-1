@@ -46,9 +46,13 @@ class EmbeddingService:
         Encode one or more texts into dense vectors.
 
         Returns a list of vectors (even for a single input).
+        Normalizes Unicode and strips invisible characters before encoding.
         """
         if isinstance(texts, str):
             texts = [texts]
+
+        # Normalize text for consistent embeddings
+        texts = [self._clean(t) for t in texts]
 
         model = self._load_model()
         embeddings = model.encode(
@@ -57,6 +61,16 @@ class EmbeddingService:
             show_progress_bar=False,
         )
         return embeddings.tolist()
+
+    @staticmethod
+    def _clean(text: str) -> str:
+        """Strip invisible Unicode chars that hurt embedding quality."""
+        import re
+        import unicodedata
+        text = unicodedata.normalize("NFC", text)
+        # Remove zero-width and format characters
+        text = re.sub(r"[\u200b\u200c\u200d\u2060\ufeff]", "", text)
+        return text
 
     @property
     def dimension(self) -> int:

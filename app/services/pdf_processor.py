@@ -73,13 +73,17 @@ def _ocr_page(page: fitz.Page) -> str:
 def _extract_text_from_page(page: fitz.Page) -> str:
     """
     Extract text from a page.
-    Falls back to OCR if:
-      - No text is extracted
-      - Extracted text looks garbled (custom fonts)
+    
+    Flow: extract → normalize → check garbled → OCR fallback if needed.
+    Normalization happens BEFORE the garbled check so that valid Hindi 
+    text with zero-width joiners isn't incorrectly flagged.
     """
-    text = page.get_text("text").strip()
+    raw_text = page.get_text("text").strip()
 
-    # If text exists but looks garbled, prefer OCR
+    # Normalize first — strip ZWJ, invisible chars, normalize Unicode
+    text = _normalize_text(raw_text) if raw_text else ""
+
+    # If normalized text is good, return it
     if text and not _is_garbled(text):
         return text
 
@@ -89,7 +93,7 @@ def _extract_text_from_page(page: fitz.Page) -> str:
     # OCR fallback
     ocr_text = _ocr_page(page)
     if ocr_text:
-        return ocr_text
+        return _normalize_text(ocr_text)
 
     # If OCR also failed, return whatever we have (even if garbled)
     return text
@@ -105,9 +109,7 @@ def extract_text_from_pdf(file: BinaryIO, filename: str) -> list[dict]:
     for page in doc:
         text = _extract_text_from_page(page)
         if text:
-            text = _normalize_text(text)
-            if text:
-                pages.append({"page_number": page.number + 1, "text": text})
+            pages.append({"page_number": page.number + 1, "text": text})
     doc.close()
     logger.info("pdf_extracted", filename=filename, pages=len(pages))
     return pages
